@@ -1,0 +1,15 @@
+name: cupy  # Change "your_env_name" to your desired environment name
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8  # Specify your Python version here
+  - numpy
+  - scipy
+  - matplotlib  # Add any other Conda-installable dependencies here
+  - pip
+  - cudatoolkit=10.1  # Specify CUDA Toolkit version. Adjust as needed for compatibility with CuPy version
+  - pip:
+    - pip
+    - setuptools
+    - cupy-cuda101  # CuPy will be installed via pip. Ensure compatibility with CUDA Toolkit version
