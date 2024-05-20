@@ -14,6 +14,9 @@ import timeit
 import tifffile
 import argparse
 
+# python rlgc.py --input "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1.tif" --psf "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/448SamplePSF2_cropped.tif" --output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1_rlgc_iter20.tif" --rl_output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/debug_iterations20.tif" --max_iters 20
+
+
 rng = np.random.default_rng()
 
 # TODO: additional options add redundant code where 
@@ -55,8 +58,10 @@ def main():
     
     # Load data
     full_image = tifffile.imread(args.input)
+    print(args.input)
 
-    image_shape = get_image_shape(full_image)
+    image_shape = get_image_shape(full_image, psf_list)
+    print(image_shape)
     
     # Load PSFs
     psfs = load_psfs(args, psf_list, image_shape)
@@ -100,10 +105,15 @@ def triage(args, full_image, psfs):
         # TODO: Should this also have some alignment if psfs are very different?
         return rlgc_5D(args, full_image, psfs)
 
-def get_image_shape(full_image):
-    # assume z-----yx
+def get_image_shape(full_image, psf_list):
+
+    # assume tzcyx or zcyx
     shape = full_image.shape
-    first_element = shape[0]
+    if len(shape) == 4 and len(psf_list) == 2:
+        first_element = shape[0]
+    else:
+        first_element = shape[1]
+
     last_two_elements = shape[-2:]
     
     # Combine into a new tuple
@@ -166,10 +176,10 @@ def load_psfs(args, psf_list, image_shape):
 def rlgc_4D(args, full_image, psf, chstr):
     recon_4D = np.zeros(full_image.shape, dtype=np.float32)
     recon_rl_4D = np.zeros(full_image.shape, dtype=np.float32)
-    for timepoint in range(full_image.shape[1]):
-        recon, recon_rl = rlgc(args, full_image[:,timepoint], psf, timepoint, chstr)
-        recon_4D[:,timepoint]= recon
-        recon_rl_4D[:,timepoint]= recon_rl
+    for timepoint in range(full_image.shape[0]):
+        recon, recon_rl = rlgc(args, full_image[timepoint], psf, timepoint, chstr)
+        recon_4D[timepoint]= recon
+        recon_rl_4D[timepoint]= recon_rl
     return recon_4D, recon_rl_4D
 
 def rlgc_4D_multichannel(args, full_image, psfs):
