@@ -1,0 +1,18 @@
+# Ignore all .ipynb_checkpoints directories
+.ipynb_checkpoints/
+
+# Ignore metadata files
+.metadata/
+
+# Ignore all .ipynb files
+*.ipynb
+
+# Optionally, if you want to track .ipynb files but ignore outputs:
+# *.ipynb outputs will need a pre-commit hook or manual nbstripout usage
+
+# Ignore log files
+*.log
+
+# Ignore temporary files that might be created
+*.pyc
+*~
