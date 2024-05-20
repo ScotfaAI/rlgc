@@ -12,4 +12,6 @@ dependencies:
   - pip:
     - pip
     - setuptools
+    - tifffile
+    - jupyter
     - cupy-cuda101  # CuPy will be installed via pip. Ensure compatibility with CUDA Toolkit version
