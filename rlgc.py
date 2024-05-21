@@ -7,18 +7,22 @@
 # Developed in collaboration with Andy York (Calico), Jan Becker (Oxford) and Craig Russell (EMBL EBI)
 # Minor edits by Scott Brooks (Warwick) s.brooks.2@warwick.ac.uk
 
+
 import numpy as np
 import cupy as cp
 import ast
 import timeit
 import tifffile
 import argparse
-import json
-
+from joblib import Parallel, delayed
+import cProfile
+import pstats
 # python rlgc.py --input "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1.tif" --psf "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/448SamplePSF2_cropped.tif" --output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1_rlgc_iter20.tif" --rl_output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/debug_iterations20.tif" --max_iters 20
 
-
+ntype = np.float16
+ctype = cp.float16
 rng = np.random.default_rng()
+optimal_pool_size = 60  # This appears to be max windows can handle
 
 # TODO: additional options add redundant code where 
 
@@ -139,7 +143,7 @@ def load_psfs(args, psf_list, image_shape):
     # this is a little inefficient, but avoiding lists, should we store the first read?
     # psf_temp = tifffile.imread(psf_list[0])e
     new_shape = (len(psf_list),) + image_shape
-    psfs = cp.zeros(new_shape, dtype=cp.float32)
+    psfs = cp.zeros(new_shape, dtype=ctype)
     
     for i, psf_path in enumerate(psf_list):
         # Load and pad PSF if necessary
@@ -184,47 +188,84 @@ def load_psfs(args, psf_list, image_shape):
         psf = psf / np.sum(psf)
     
         # Load data PSF onto GPU
-        psfs[i] = cp.array(psf, dtype=cp.float32)
+        psfs[i] = cp.array(psf, dtype=ctype)
 
     return psfs
         
+# NOT PARAELLEL
+# def rlgc_4D(args, full_image, psf, chstr):
+#     recon_4D = np.zeros(full_image.shape, dtype=ntype)
+#     recon_rl_4D = np.zeros(full_image.shape, dtype=ntype)
+#     for timepoint in range(full_image.shape[0]):
+#         recon, recon_rl = rlgc(args, full_image[timepoint], psf, timepoint, chstr)
+#         recon_4D[timepoint]= recon
+#         recon_rl_4D[timepoint]= recon_rl
+#     return recon_4D, recon_rl_4D
+
+# def rlgc_4D_multichannel(args, full_image, psfs):
+#     recon_4D = np.zeros(full_image.shape, dtype=ntype)
+#     recon_rl_4D = np.zeros(full_image.shape, dtype=ntype)
+#     for channel in range(len(psfs)):
+#         recon, recon_rl = rlgc(args, full_image[:,channel], psfs[channel], 0, channel)
+#         recon_4D[:,channel]= recon
+#         recon_rl_4D[:,channel]= recon_rl
+#     return recon_4D, recon_rl_4D
+
+# def rlgc_5D(args, full_image,psfs):
+#     recon_5D = np.zeros(full_image.shape, dtype=ntype)
+#     recon_rl_5D = np.zeros(full_image.shape, dtype=ntype)
+#     print(full_image.shape)
+    
+#     for channel in range(len(psfs)):
+#         recon, recon_rl = rlgc_4D(args, full_image[:,:,channel], psfs[channel], channel)
+#         recon_5D[:,:,channel]= recon
+#         recon_rl_5D[:,:,channel]= recon_rl
+#     return recon_5D, recon_rl_5D
+        
+
 
 def rlgc_4D(args, full_image, psf, chstr):
-    recon_4D = np.zeros(full_image.shape, dtype=np.float32)
-    recon_rl_4D = np.zeros(full_image.shape, dtype=np.float32)
-    for timepoint in range(full_image.shape[0]):
-        recon, recon_rl = rlgc(args, full_image[timepoint], psf, timepoint, chstr)
-        recon_4D[timepoint]= recon
-        recon_rl_4D[timepoint]= recon_rl
-    return recon_4D, recon_rl_4D
+
+    results = Parallel(n_jobs=optimal_pool_size)(
+        delayed(rlgc)(args, full_image[timepoint], psf, timepoint, chstr) for timepoint in range(full_image.shape[0])
+    )
+    recon_4D, recon_rl_4D = zip(*results)
+    return np.array(recon_4D), np.array(recon_rl_4D)
+
 
 def rlgc_4D_multichannel(args, full_image, psfs):
-    recon_4D = np.zeros(full_image.shape, dtype=np.float32)
-    recon_rl_4D = np.zeros(full_image.shape, dtype=np.float32)
-    for channel in range(len(psfs)):
-        recon, recon_rl = rlgc(args, full_image[:,channel], psfs[channel], 0, channel)
-        recon_4D[:,channel]= recon
-        recon_rl_4D[:,channel]= recon_rl
-    return recon_4D, recon_rl_4D
 
-def rlgc_5D(args, full_image,psfs):
-    recon_5D = np.zeros(full_image.shape, dtype=np.float32)
-    recon_rl_5D = np.zeros(full_image.shape, dtype=np.float32)
-    print(full_image.shape)
+    results = Parallel(n_jobs=optimal_pool_size)(
+        delayed(rlgc)(args, full_image[:, channel], psfs[channel], 0, channel) for channel in range(len(psfs))
+    )
+    recon_4D, recon_rl_4D = zip(*results)
+    return np.array(recon_4D), np.array(recon_rl_4D)
+
+
+def rlgc_5D(args, full_image, psfs):
+    # We will handle parallelism at this level only
     
-    for channel in range(len(psfs)):
-        recon, recon_rl = rlgc_4D(args, full_image[:,:,channel], psfs[channel], channel)
-        recon_5D[:,:,channel]= recon
-        recon_rl_5D[:,:,channel]= recon_rl
-    return recon_5D, recon_rl_5D
-        
+    results = Parallel(n_jobs=optimal_pool_size)(
+        delayed(rlgc_5D_single_channel)(args, full_image, psfs, channel) for channel in range(len(psfs))
+    )
+    recon_5D, recon_rl_5D = zip(*results)
+    return np.array(recon_5D), np.array(recon_rl_5D)
+
+def rlgc_5D_single_channel(args, full_image, psfs, channel):
+    recon_channel = []
+    recon_rl_channel = []
+    for timepoint in range(full_image.shape[0]):
+        recon, recon_rl = rlgc(args, full_image[timepoint, :, channel], psfs[channel], timepoint, channel)
+        recon_channel.append(recon)
+        recon_rl_channel.append(recon_rl)
+    return np.array(recon_channel), np.array(recon_rl_channel)
 
 def rlgc(args, image, psf, tp, ch):
     print(f"Processing timepoint {str(tp)}, channel {str(ch)}")
     
     # Load data and PSF onto GPU
     # TODO: Specify GPU
-    image = cp.array(image, dtype=cp.float32)
+    image = cp.array(image, dtype=ctype)
     
     
     # Calculate OTF and transpose
@@ -259,7 +300,7 @@ def rlgc(args, image, psf, tp, ch):
     for iter in range(args.max_iters):
         start_time = timeit.default_timer()
         print(image.shape)
-    
+
         # Split recorded image into 50:50 images
         # TODO: make this work on the GPU (for some reason, we get repeating blocks with a naive conversion to cupy)
         split1 = rng.binomial(image.get().astype('int64'), p=0.5)
@@ -312,7 +353,7 @@ def rlgc(args, image, psf, tp, ch):
         calc_time = timeit.default_timer() - start_time
         num_updated = num_pixels - cp.sum(shouldNotUpdate)
         max_relative_delta = cp.max((recon - previous_recon) / cp.max(recon))
-        print("Iteration %03d completed in %1.3f s. %1.2f %% of image updated. Update range: %1.2f to %1.2f. Largest relative delta = %1.3f" % (iter + 1, calc_time, 100 * num_updated / num_pixels, cp.min(HTratio), cp.max(HTratio), max_relative_delta))
+        print(f"Timepoint {str(tp)}, channel {str(ch)}" + "Iteration %03d completed in %1.3f s. %1.2f %% of image updated. Update range: %1.2f to %1.2f. Largest relative delta = %1.3f" % (iter + 1, calc_time, 100 * num_updated / num_pixels, cp.min(HTratio), cp.max(HTratio), max_relative_delta))
     
         num_iters = num_iters + 1
     
@@ -341,4 +382,9 @@ def fftconv(x, H):
 
 
 if __name__ == '__main__':
-	main()
+    profiler = cProfile.Profile()
+    profiler.enable()
+    main()
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats('cumtime')
+    stats.print_stats(10)
