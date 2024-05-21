@@ -13,6 +13,7 @@ import ast
 import timeit
 import tifffile
 import argparse
+import json
 
 # python rlgc.py --input "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1.tif" --psf "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/448SamplePSF2_cropped.tif" --output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/2024-05-13_montage7Capture10crop448_t1_rlgc_iter20.tif" --rl_output "/mnt/Raid_partition_1/internal_tmp/brooks/dockerdir/MantonData/debug_iterations20.tif" --max_iters 20
 
@@ -49,31 +50,45 @@ def main():
     # print('Maximum number of iterations: %d' % args.max_iters)
     # print('PSF processing: %s' % args.process_psf)
     # print('')
-    
-    # Convert the string representation of the list into an actual list
-    try:
-        psf_list = ast.literal_eval(args.psf)
-    except (ValueError, SyntaxError):
-        psf_list = [args.psf]  # If it's a single string, wrap it in a list
-    
-    # Load data
-    full_image = tifffile.imread(args.input)
+
+    # Print raw input arguments for debugging
+    print(f"Raw PSF input: {args.psf}")
+
+    # Split the comma-separated string into a list
+    psf_list = args.psf.split(',')
+
+    # Ensure it's a list
+    if not isinstance(psf_list, list):
+        raise ValueError("The argument for --psf should be a comma-separated list of strings.")
+
+
+    with tifffile.TiffFile(args.input) as tif:
+        full_image = tif.asarray()
+        # metadata = tif.shaped_metadata
+        imagej_metadata = tif.imagej_metadata if tif.is_imagej else {}
     print(args.input)
+    
 
     image_shape = get_image_shape(full_image, psf_list)
-    print(image_shape)
+    
     
     # Load PSFs
     psfs = load_psfs(args, psf_list, image_shape)
     tifffile.imwrite("processedpsfs.tif", psfs.get(), bigtiff=True)
     
     recon, recon_rl = triage(args, full_image, psfs)
+
+    with tifffile.TiffWriter(args.output, imagej=True) as tif_writer:
+        combined_metadata = {'axes': 'TZCYX'}
+        combined_metadata.update(imagej_metadata)
+        tif_writer.write(recon, metadata=combined_metadata)
+
     
-    tifffile.imwrite(args.output, recon, bigtiff=True)
+    print(recon.shape)
     
     # Save RL output if argument given
-    if args.rl_output is not None:
-        tifffile.imwrite(args.rl_output, recon_rl, bigtiff=True)
+    # if args.rl_output is not None:
+    #     tifffile.imwrite(args.rl_output, recon_rl, bigtiff=True, metadata={'axes': 'TZCYX'}, imagej_metadata=metadata)
 
     # not implemeted for 5D
 	# # Save full iterations if argument given
@@ -128,6 +143,7 @@ def load_psfs(args, psf_list, image_shape):
     
     for i, psf_path in enumerate(psf_list):
         # Load and pad PSF if necessary
+        print(psf_path)
         psf_temp = tifffile.imread(psf_path)
     
         # Add new z-axis if we have 2D data
@@ -194,6 +210,8 @@ def rlgc_4D_multichannel(args, full_image, psfs):
 def rlgc_5D(args, full_image,psfs):
     recon_5D = np.zeros(full_image.shape, dtype=np.float32)
     recon_rl_5D = np.zeros(full_image.shape, dtype=np.float32)
+    print(full_image.shape)
+    
     for channel in range(len(psfs)):
         recon, recon_rl = rlgc_4D(args, full_image[:,:,channel], psfs[channel], channel)
         recon_5D[:,:,channel]= recon
